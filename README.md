@@ -45,6 +45,20 @@ Each new build installs as an update, and your notes are kept.
 - In a note you can tick off steps and roadmap items, open links, star it, export it as Markdown, or re-run it with the other AI.
 - Links that didn't respond when checked are shown with a ⚠️.
 
+## Features
+
+| Feature | Where |
+|---|---|
+| ✨ **Ask your notes**: chat that answers from your whole library and links the notes it used | ✨ button on the main screen |
+| 🎓 **Quizzes + spaced repetition**: AI multiple-choice questions per note; right answers return after 1, 3, 7, 16… days | "Make quiz" in a note, then 🎓 Review |
+| ⏰ **Reminders**: "this evening", "this weekend", or any date and time | Alarm icon in a note |
+| 🕸️ **Related notes + knowledge graph**: notes that share tools, sites or tags are connected | "Related notes" in a note, 🕸️ button for the map |
+| 📥 **Import Instagram saves**: reads Instagram's data download and processes old saves one by one | Settings → Your data |
+| 📤 **Export to Obsidian / Notion**: Markdown .zip, one folder per category, ticked checklists kept | Settings → Your data |
+| 🏠 **Home-screen widget**: next reminder, quiz cards due, or a random tip (↻ for another) | Long-press home screen → Widgets → ReelNotes |
+| 🔔 **Daily digest**: one notification with what you saved, quizzes due and unfinished steps | Settings → Daily digest |
+| 💾 **Backup / restore**: to a file, or to your PC (also automatic once a day to `server\backups`) | Settings → Your data |
+
 ## Instagram login (if downloads fail)
 
 Instagram sometimes blocks anonymous downloads. Fixes, easiest first:

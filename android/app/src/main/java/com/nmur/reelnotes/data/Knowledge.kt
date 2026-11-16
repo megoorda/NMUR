@@ -37,10 +37,14 @@ object Knowledge {
     fun candidates(question: String, notes: List<Note>, max: Int = 40, maxChars: Int = 60_000): String {
         val done = notes.filter { it.status == Status.DONE }
         val q = words(question)
-        val scored = done.map { n ->
+        val scored: List<Pair<Note, Int>> = done.map { n ->
             val text = n.searchText
-            val score = q.sumOf { w -> if (text.contains(w)) (if (n.title.lowercase().contains(w)) 3 else 1) else 0 }
-            n to score
+            val title = n.title.lowercase()
+            var score = 0
+            for (w in q) {
+                if (text.contains(w)) score += if (title.contains(w)) 3 else 1
+            }
+            Pair(n, score)
         }
         val anyHit = scored.any { it.second > 0 }
         val ordered = (if (anyHit) scored.filter { it.second > 0 }.sortedByDescending { it.second } else scored)
