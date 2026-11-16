@@ -61,6 +61,7 @@ class ProcessWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 )
             )
             notify(id, "🧠 ${c.title.ifBlank { "Note ready" }}", doneSummary(c))
+            com.nmur.reelnotes.widget.TipWidget.refresh(applicationContext)
             Result.success()
         } catch (e: ServerException) {
             if (e.retryable && runAttemptCount < MAX_RETRIES) {
@@ -118,6 +119,19 @@ class ProcessWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork("note-$noteId", ExistingWorkPolicy.REPLACE, req)
+        }
+
+        /** For bulk imports: process one at a time so Instagram and the AI aren't flooded. */
+        fun enqueueSequential(context: Context, noteIds: List<Long>) {
+            val wm = WorkManager.getInstance(context)
+            noteIds.forEach { id ->
+                val req = OneTimeWorkRequestBuilder<ProcessWorker>()
+                    .setInputData(workDataOf(KEY_ID to id))
+                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+                    .build()
+                wm.enqueueUniqueWork("import-queue", ExistingWorkPolicy.APPEND_OR_REPLACE, req)
+            }
         }
 
         fun buildSearchText(c: NoteContent, creator: String, caption: String, transcript: String): String =

@@ -2,6 +2,7 @@ package com.nmur.reelnotes.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.text.format.DateUtils
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.AlarmAdd
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Share
@@ -61,6 +64,12 @@ import com.nmur.reelnotes.data.AppDatabase
 import com.nmur.reelnotes.data.Note
 import com.nmur.reelnotes.data.NoteContent
 import com.nmur.reelnotes.data.Providers
+import com.nmur.reelnotes.data.Knowledge
+import com.nmur.reelnotes.data.QuizCard
+import com.nmur.reelnotes.data.ServerApi
+import com.nmur.reelnotes.data.Settings
+import com.nmur.reelnotes.work.ReminderWorker
+import com.nmur.reelnotes.widget.TipWidget
 import com.nmur.reelnotes.data.Status
 import com.nmur.reelnotes.work.ProcessWorker
 import kotlinx.coroutines.launch
@@ -68,12 +77,17 @@ import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DetailScreen(noteId: Long, onBack: () -> Unit) {
+fun DetailScreen(noteId: Long, onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
     val ctx = LocalContext.current
     val dao = remember { AppDatabase.get(ctx).notes() }
     val note by dao.observe(noteId).collectAsStateWithLifecycle(initialValue = null)
     val scope = rememberCoroutineScope()
     var confirmDelete by remember { mutableStateOf(false) }
+    var showReminder by remember { mutableStateOf(false) }
+    var quizBusy by remember { mutableStateOf(false) }
+    var quizMsg by remember { mutableStateOf("") }
+    val cardCount by AppDatabase.get(ctx).quiz().countForNote(noteId).collectAsStateWithLifecycle(initialValue = 0)
+    val allNotes by dao.all().collectAsStateWithLifecycle(initialValue = emptyList())
 
     val n = note
     Scaffold(
@@ -85,6 +99,9 @@ fun DetailScreen(noteId: Long, onBack: () -> Unit) {
                     if (n != null) {
                         IconButton(onClick = { scope.launch { dao.update(n.copy(favorite = !n.favorite)) } }) {
                             Icon(if (n.favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite")
+                        }
+                        IconButton(onClick = { showReminder = true }) {
+                            Icon(if (n.remindAt > 0) Icons.Default.Alarm else Icons.Default.AlarmAdd, "Reminder")
                         }
                         IconButton(onClick = {
                             val send = Intent(Intent.ACTION_SEND).setType("text/plain")
@@ -141,7 +158,63 @@ fun DetailScreen(noteId: Long, onBack: () -> Unit) {
                 }
             }
 
+            if (n.remindAt > 0) item {
+                AssistChip(
+                    onClick = { showReminder = true },
+                    label = { Text("⏰ " + DateUtils.getRelativeTimeSpanString(n.remindAt)) },
+                )
+            }
+
             if (c != null) noteSections(ctx, c, checked) { toggle(it) }
+
+            if (n.status == Status.DONE) item {
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("Remember it", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(enabled = !quizBusy, onClick = {
+                        quizBusy = true; quizMsg = ""
+                        scope.launch {
+                            quizMsg = try {
+                                val settings = Settings(ctx)
+                                val qs = ServerApi(settings).quiz(Knowledge.compact(n, full = true), 5, settings.provider)
+                                AppDatabase.get(ctx).quiz().insertAll(qs.map {
+                                    QuizCard(noteId = n.id, question = it.question,
+                                        options = it.options.joinToString(QuizCard.OPTION_SEP),
+                                        answerIndex = it.answerIndex, explanation = it.explanation)
+                                })
+                                "Added ${qs.size} questions. Find them under 🎓 Review."
+                            } catch (e: Exception) {
+                                "Couldn't make quiz: ${e.message}"
+                            } finally {
+                                quizBusy = false
+                            }
+                        }
+                    }) { Text(if (cardCount > 0) "Make more quiz questions" else "Make quiz") }
+                    Spacer(Modifier.width(8.dp))
+                    if (quizBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else if (cardCount > 0) Text("$cardCount cards", style = MaterialTheme.typography.labelMedium)
+                }
+                if (quizMsg.isNotBlank()) Text(quizMsg, style = MaterialTheme.typography.bodySmall)
+            }
+
+            val related = Knowledge.related(n, allNotes)
+            if (related.isNotEmpty()) {
+                item {
+                    Text("Related notes", style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
+                }
+                related.forEach { r ->
+                    item {
+                        Card(Modifier.fillMaxWidth().clickable { onOpenNote(r.note.id) }) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(r.note.title, fontWeight = FontWeight.SemiBold)
+                                if (r.shared.isNotEmpty()) Text("Shares: " + r.shared.take(4).joinToString(", "),
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
 
             if (n.caption.isNotBlank()) expandable("Original caption", n.caption)
             if (n.transcript.isNotBlank()) expandable("Transcript", n.transcript)
@@ -158,6 +231,21 @@ fun DetailScreen(noteId: Long, onBack: () -> Unit) {
         }
     }
 
+    if (showReminder && n != null) {
+        ReminderDialog(
+            current = n.remindAt,
+            onDismiss = { showReminder = false },
+            onSet = { at ->
+                showReminder = false
+                scope.launch {
+                    dao.update(n.copy(remindAt = at))
+                    if (at > 0) ReminderWorker.schedule(ctx, n.id, at) else ReminderWorker.cancel(ctx, n.id)
+                    TipWidget.refresh(ctx)
+                }
+            },
+        )
+    }
+
     if (confirmDelete && n != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -166,6 +254,8 @@ fun DetailScreen(noteId: Long, onBack: () -> Unit) {
                 TextButton(onClick = {
                     scope.launch {
                         n.localFiles.lines().filter { it.isNotBlank() }.forEach { File(it).delete() }
+                        ReminderWorker.cancel(ctx, n.id)
+                        AppDatabase.get(ctx).quiz().deleteForNote(n.id)
                         dao.delete(n.id)
                         onBack()
                     }

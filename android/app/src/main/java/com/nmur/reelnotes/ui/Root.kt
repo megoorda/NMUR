@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.nmur.reelnotes.MainActivity
 
 @Composable
 fun ReelNotesTheme(content: @Composable () -> Unit) {
@@ -29,34 +30,40 @@ fun ReelNotesTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = scheme, content = content)
 }
 
-/** Very small navigator: library → note detail / settings. */
-@Composable
-fun ReelNotesRoot(openNoteId: Long, onOpenHandled: () -> Unit) {
-    var noteId by rememberSaveable { mutableLongStateOf(-1L) }
-    var showSettings by rememberSaveable { mutableStateOf(false) }
+object Screens {
+    const val LIBRARY = "library"
+    const val SETTINGS = "settings"
+    const val ASK = "ask"
+    const val REVIEW = MainActivity.SCREEN_REVIEW
+    const val GRAPH = "graph"
+}
 
-    LaunchedEffect(openNoteId) {
-        if (openNoteId > 0) {
-            noteId = openNoteId
-            showSettings = false
-            onOpenHandled()
-        }
+/** Small navigator: a top-level screen, plus an optional open note on top of it. */
+@Composable
+fun ReelNotesRoot(openNoteId: Long, openScreen: String?, onOpenHandled: () -> Unit) {
+    var screen by rememberSaveable { mutableStateOf(Screens.LIBRARY) }
+    var noteId by rememberSaveable { mutableLongStateOf(-1L) }
+
+    LaunchedEffect(openNoteId, openScreen) {
+        if (openScreen != null) { screen = openScreen; noteId = -1L }
+        if (openNoteId > 0) noteId = openNoteId
+        if (openScreen != null || openNoteId > 0) onOpenHandled()
     }
 
     ReelNotesTheme {
-        when {
-            showSettings -> {
-                BackHandler { showSettings = false }
-                SettingsScreen(onBack = { showSettings = false })
-            }
-            noteId > 0 -> {
-                BackHandler { noteId = -1L }
-                DetailScreen(noteId = noteId, onBack = { noteId = -1L })
-            }
-            else -> LibraryScreen(
-                onOpen = { noteId = it },
-                onSettings = { showSettings = true },
-            )
+        if (noteId > 0) {
+            BackHandler { noteId = -1L }
+            DetailScreen(noteId = noteId, onBack = { noteId = -1L }, onOpenNote = { noteId = it })
+            return@ReelNotesTheme
+        }
+        if (screen != Screens.LIBRARY) BackHandler { screen = Screens.LIBRARY }
+        val back = { screen = Screens.LIBRARY }
+        when (screen) {
+            Screens.SETTINGS -> SettingsScreen(onBack = back)
+            Screens.ASK -> AskScreen(onBack = back, onOpenNote = { noteId = it })
+            Screens.REVIEW -> ReviewScreen(onBack = back, onOpenNote = { noteId = it })
+            Screens.GRAPH -> GraphScreen(onBack = back, onOpenNote = { noteId = it })
+            else -> LibraryScreen(onOpen = { noteId = it }, onNavigate = { screen = it })
         }
     }
 }

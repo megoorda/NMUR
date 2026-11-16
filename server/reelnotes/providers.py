@@ -140,3 +140,53 @@ def run_claude(media: Media, categories: list[str], workdir: Path) -> tuple[dict
         raise ProviderError(f"Claude error: {envelope.get('result')}")
     result = envelope.get("structured_output") or _extract_json(str(envelope.get("result", "")))
     return result, transcript.strip()
+
+
+# ---------------------------------------------------------------- text-only (ask / quiz)
+def run_text(provider: str, prompt: str, schema: dict) -> dict:
+    """Send a plain-text prompt to the chosen AI and get JSON matching `schema`."""
+    if provider == "claude":
+        exe = shutil.which(config.CLAUDE_CLI)
+        if not exe:
+            raise ProviderError("Claude Code CLI not found on the PC.")
+        full = prompt + "\n\nReply with ONLY a JSON object (no markdown) matching this JSON schema:\n" + json.dumps(schema)
+        cmd = [exe, "-p", "--output-format", "json", "--tools", "Read", "--allowedTools", "Read"]
+        if config.CLAUDE_MODEL:
+            cmd += ["--model", config.CLAUDE_MODEL]
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="reelnotes_txt_") as tmp:
+            try:
+                proc = subprocess.run(cmd, input=full, capture_output=True, text=True, encoding="utf-8",
+                                      cwd=tmp, timeout=config.CLAUDE_TIMEOUT)
+            except subprocess.TimeoutExpired as e:
+                raise ProviderError("Claude timed out") from e
+        if proc.returncode != 0:
+            raise ProviderError(f"Claude CLI failed: {(proc.stderr or proc.stdout)[-800:]}")
+        try:
+            envelope = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            envelope = {"result": proc.stdout}
+        if envelope.get("is_error"):
+            raise ProviderError(f"Claude error: {envelope.get('result')}")
+        return envelope.get("structured_output") or _extract_json(str(envelope.get("result", "")))
+
+    if not config.GEMINI_API_KEY:
+        raise ProviderError("GEMINI_API_KEY is not set in server/.env")
+    from google import genai
+    from google.genai import types
+
+    try:
+        client = genai.Client(api_key=config.GEMINI_API_KEY)
+        resp = client.models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json", response_schema=schema, temperature=0.3,
+            ),
+        )
+    except Exception as e:
+        raise ProviderError(f"Gemini error: {e}") from e
+    if not resp.text:
+        raise ProviderError("Gemini returned an empty response")
+    return _extract_json(resp.text)

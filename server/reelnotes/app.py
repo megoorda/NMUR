@@ -7,13 +7,16 @@ import re
 import secrets
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
-from . import config, providers
+from . import config, providers, study
 from .download import Media, classify_uploads, download
 from .schema import DEFAULT_CATEGORIES
 
@@ -125,6 +128,69 @@ async def process(
             }
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+
+class AskRequest(BaseModel):
+    question: str
+    notes: str  # compact text of candidate notes, prepared by the app
+    history: list[dict] = []
+    provider: str = "gemini"
+
+
+class QuizRequest(BaseModel):
+    note: str
+    count: int = 5
+    provider: str = "gemini"
+
+
+@app.post("/ask", dependencies=[Depends(check_token)])
+async def ask(req: AskRequest) -> dict:
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Empty question")
+    prompt = study.ask_prompt(req.question, req.notes[:200_000], req.history)
+    try:
+        return await run_in_threadpool(providers.run_text, req.provider, prompt, study.ASK_SCHEMA)
+    except providers.ProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
+@app.post("/quiz", dependencies=[Depends(check_token)])
+async def quiz(req: QuizRequest) -> dict:
+    prompt = study.quiz_prompt(req.note[:30_000], max(1, min(req.count, 10)))
+    try:
+        result = await run_in_threadpool(providers.run_text, req.provider, prompt, study.QUIZ_SCHEMA)
+    except providers.ProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    good = [
+        q for q in result.get("questions", [])
+        if isinstance(q, dict) and len(q.get("options", [])) >= 2
+        and 0 <= int(q.get("answer_index", -1)) < len(q["options"])
+    ]
+    return {"questions": good}
+
+
+BACKUP_DIR = Path(__file__).resolve().parent.parent / "backups"
+
+
+@app.post("/backup", dependencies=[Depends(check_token)])
+async def backup_upload(file: UploadFile = File(...)) -> dict:
+    """Keep the phone library on the PC (latest + one dated copy per day)."""
+    BACKUP_DIR.mkdir(exist_ok=True)
+    data = await file.read()
+    if len(data) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Backup too large")
+    latest = BACKUP_DIR / "latest.json"
+    latest.write_bytes(data)
+    (BACKUP_DIR / f"backup-{time.strftime('%Y-%m-%d')}.json").write_bytes(data)
+    return {"ok": True, "bytes": len(data)}
+
+
+@app.get("/backup", dependencies=[Depends(check_token)])
+def backup_download() -> FileResponse:
+    latest = BACKUP_DIR / "latest.json"
+    if not latest.exists():
+        raise HTTPException(status_code=404, detail="No backup on the PC yet")
+    return FileResponse(latest, media_type="application/json")
 
 
 def main() -> None:

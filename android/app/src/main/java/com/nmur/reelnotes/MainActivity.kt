@@ -10,10 +10,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import com.nmur.reelnotes.ui.ReelNotesRoot
 
 class MainActivity : ComponentActivity() {
     private val openNoteId = mutableLongStateOf(-1L)
+    private val openScreen = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,7 +28,11 @@ class MainActivity : ComponentActivity() {
         }
         handle(intent)
         setContent {
-            ReelNotesRoot(openNoteId = openNoteId.longValue, onOpenHandled = { openNoteId.longValue = -1L })
+            ReelNotesRoot(
+                openNoteId = openNoteId.longValue,
+                openScreen = openScreen.value,
+                onOpenHandled = { openNoteId.longValue = -1L; openScreen.value = null },
+            )
         }
     }
 
@@ -38,9 +44,12 @@ class MainActivity : ComponentActivity() {
     private fun handle(intent: Intent?) {
         val id = intent?.getLongExtra(EXTRA_NOTE_ID, -1L) ?: -1L
         if (id > 0) openNoteId.longValue = id
+        intent?.getStringExtra(EXTRA_SCREEN)?.let { openScreen.value = it }
     }
 
     companion object {
         const val EXTRA_NOTE_ID = "note_id"
+        const val EXTRA_SCREEN = "screen"
+        const val SCREEN_REVIEW = "review"
     }
 }

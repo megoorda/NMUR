@@ -6,7 +6,10 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -75,4 +78,70 @@ class ServerApi(private val settings: Settings) {
             throw ServerException("Can't reach server (is the PC on and Tailscale connected?): ${e.message}", true)
         }
     }
+
+    private suspend fun postJson(path: String, json: String): String = call(
+        Request.Builder().url(base() + path).header("X-Api-Key", settings.token)
+            .post(json.toRequestBody("application/json".toMediaType())).build()
+    )
+
+    private suspend fun call(req: Request): String = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(req).execute().use { r ->
+                val body = r.body?.string().orEmpty()
+                if (!r.isSuccessful) {
+                    val detail = runCatching {
+                        AppJson.parseToJsonElement(body).jsonObject["detail"]?.jsonPrimitive?.content
+                    }.getOrNull() ?: "HTTP ${r.code}: ${body.take(300)}"
+                    throw ServerException(detail, retryable = r.code == 503 || r.code == 504)
+                }
+                body
+            }
+        } catch (e: IOException) {
+            throw ServerException("Can't reach server (is the PC on and Tailscale connected?): ${e.message}", true)
+        }
+    }
+
+    suspend fun ask(question: String, notes: String, history: List<ChatTurn>, provider: String): AskResponse {
+        val req = AskRequest(question, notes, history, provider)
+        val body = postJson("/ask", AppJson.encodeToString(AskRequest.serializer(), req))
+        return AppJson.decodeFromString(AskResponse.serializer(), body)
+    }
+
+    suspend fun quiz(note: String, count: Int, provider: String): List<QuizQuestion> {
+        val body = postJson("/quiz", AppJson.encodeToString(QuizRequest.serializer(), QuizRequest(note, count, provider)))
+        return AppJson.decodeFromString(QuizResponse.serializer(), body).questions
+    }
+
+    suspend fun uploadBackup(json: String) {
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("file", "reelnotes-backup.json", json.toRequestBody("application/json".toMediaType()))
+            .build()
+        call(Request.Builder().url(base() + "/backup").header("X-Api-Key", settings.token).post(form).build())
+    }
+
+    suspend fun downloadBackup(): String =
+        call(Request.Builder().url(base() + "/backup").header("X-Api-Key", settings.token).get().build())
 }
+
+@Serializable
+data class ChatTurn(val role: String, val text: String)
+
+@Serializable
+private data class AskRequest(val question: String, val notes: String, val history: List<ChatTurn>, val provider: String)
+
+@Serializable
+data class AskResponse(val answer: String = "", @kotlinx.serialization.SerialName("used_note_ids") val usedNoteIds: List<Long> = emptyList())
+
+@Serializable
+private data class QuizRequest(val note: String, val count: Int, val provider: String)
+
+@Serializable
+data class QuizQuestion(
+    val question: String = "",
+    val options: List<String> = emptyList(),
+    @kotlinx.serialization.SerialName("answer_index") val answerIndex: Int = 0,
+    val explanation: String = "",
+)
+
+@Serializable
+private data class QuizResponse(val questions: List<QuizQuestion> = emptyList())

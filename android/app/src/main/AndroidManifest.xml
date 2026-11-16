@@ -52,5 +52,17 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".widget.TipWidget"
+            android:exported="false"
+            android:label="ReelNotes tip">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tip_widget_info" />
+        </receiver>
     </application>
 </manifest>

@@ -18,12 +18,17 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -65,7 +70,8 @@ private const val FAVS = "★ Saved"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
+fun LibraryScreen(onOpen: (Long) -> Unit, onNavigate: (String) -> Unit) {
+    val onSettings = { onNavigate(Screens.SETTINGS) }
     val ctx = LocalContext.current
     val dao = remember { AppDatabase.get(ctx).notes() }
     val notes by dao.all().collectAsStateWithLifecycle(initialValue = emptyList())
@@ -73,6 +79,8 @@ fun LibraryScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
     var filter by rememberSaveable { mutableStateOf(ALL) }
     var showAdd by remember { mutableStateOf(false) }
     val configured = remember { Settings(ctx).isConfigured }
+    val now = remember { System.currentTimeMillis() }
+    val due by AppDatabase.get(ctx).quiz().dueCount(now).collectAsStateWithLifecycle(initialValue = 0)
 
     val categories = remember(notes) {
         notes.map { it.category }.filter { it.isNotBlank() }.groupingBy { it }.eachCount()
@@ -88,7 +96,16 @@ fun LibraryScreen(onOpen: (Long) -> Unit, onSettings: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("ReelNotes") },
-                actions = { IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") } },
+                actions = {
+                    IconButton(onClick = { onNavigate(Screens.ASK) }) { Icon(Icons.Default.AutoAwesome, "Ask AI") }
+                    IconButton(onClick = { onNavigate(Screens.REVIEW) }) {
+                        BadgedBox(badge = { if (due > 0) Badge { Text("$due") } }) {
+                            Icon(Icons.Default.School, "Review quizzes")
+                        }
+                    }
+                    IconButton(onClick = { onNavigate(Screens.GRAPH) }) { Icon(Icons.Default.Hub, "Knowledge graph") }
+                    IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
+                },
             )
         },
         floatingActionButton = {
